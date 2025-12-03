@@ -1,11 +1,6 @@
-import os
-import librosa
-import pandas as pd
-import numpy as np
-
-OUTPUT_DIR = os.path.join('..', '..', 'outputs')
-
 """
+Audio analysis module for extracting musical features from tracks.
+
 Chroma Position to Note Mapping:
 Position 0  = C
 Position 1  = C#/Db
@@ -20,6 +15,24 @@ Position 9  = A
 Position 10 = A#/Bb
 Position 11 = B
 """
+
+import os
+import librosa
+import pandas as pd
+import numpy as np
+
+NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+
+ENHARMONIC_PAIRS = {
+    'C#': 'Db', 'Db': 'C#',
+    'D#': 'Eb', 'Eb': 'D#',
+    'F#': 'Gb', 'Gb': 'F#',
+    'G#': 'Ab', 'Ab': 'G#',
+    'A#': 'Bb', 'Bb': 'A#'
+}
 
 
 def load_audio(file_path):
@@ -129,45 +142,42 @@ def estimate_time_signature(audio_time_series, sample_rate, beat_frame_indices, 
 def identify_active_notes(chroma_frame, threshold=0.5):
     # If it's above the threshold, it's probably playing.
     # Everything else is likely just background noise or harmonics.
-    note_names = ['C', 'C#', 'D', 'D#', 'E', 'F',
-                  'F#', 'G', 'G#', 'A', 'A#', 'B']
-
     active_notes = []
     for note_index in range(12):
         note_strength = chroma_frame[note_index]
         if note_strength > threshold:
             active_notes.append({
-                'name': note_names[note_index],
+                'name': NOTE_NAMES[note_index],
                 'strength': note_strength
             })
 
     return active_notes
 
 
-def clean_audio_for_chroma(audio_time_series, sample_rate):
+def clean_audio_for_chroma(audio, sample_rate):
     """
     Cleaning up the audio for pitch analysis.
     Reducing rumble and separating harmonics to get rid of drums.
     """
-    y_pre = librosa.effects.preemphasis(audio_time_series, coef=0.97)
-    y_harm, y_perc = librosa.effects.hpss(y_pre)
-    return y_harm
+    preemphasized = librosa.effects.preemphasis(audio, coef=0.97)
+    harmonic, percussive = librosa.effects.hpss(preemphasized)
+    return harmonic
 
 
-def compute_enhanced_chroma(y_harm, sample_rate, hop_length=512):
+def compute_enhanced_chroma(harmonic_audio, sample_rate, hop_length=512):
     """
     Making a smoother chroma for key detection.
     Using HPSS and median filtering like in the librosa examples.
     """
     # Getting the Constant-Q chroma from the harmonic part.
     chroma = librosa.feature.chroma_cqt(
-        y=y_harm,
+        y=harmonic_audio,
         sr=sample_rate,
         hop_length=hop_length
     )
 
     # Smoothing it out with a nearest-neighbor filter.
-    chroma_filt = np.minimum(
+    chroma_filtered = np.minimum(
         chroma,
         librosa.decompose.nn_filter(
             chroma,
@@ -177,9 +187,9 @@ def compute_enhanced_chroma(y_harm, sample_rate, hop_length=512):
     )
 
     # Normalizing each frame.
-    chroma_norm = librosa.util.normalize(chroma_filt, axis=0)
+    chroma_normalized = librosa.util.normalize(chroma_filtered, axis=0)
 
-    return chroma_norm
+    return chroma_normalized
 
 
 def get_relative_key(key_note, key_mode):
@@ -187,75 +197,61 @@ def get_relative_key(key_note, key_mode):
     Figuring out the relative major or minor key.
     Returns tuple: (relative_note, relative_mode)
     """
-    note_names = ['C', 'C#', 'D', 'D#', 'E', 'F',
-                  'F#', 'G', 'G#', 'A', 'A#', 'B']
-    
-    root_index = note_names.index(key_note)
+    root_index = NOTE_NAMES.index(key_note)
     
     if key_mode == 'major':
         # Relative minor is 3 semitones down.
         relative_index = (root_index - 3) % 12
-        relative_note = note_names[relative_index]
+        relative_note = NOTE_NAMES[relative_index]
         relative_mode = 'minor'
     else:  # minor
         # Relative major is 3 semitones up.
         relative_index = (root_index + 3) % 12
-        relative_note = note_names[relative_index]
+        relative_note = NOTE_NAMES[relative_index]
         relative_mode = 'major'
     
     return relative_note, relative_mode
 
 
-def estimate_key_with_candidates(chroma_pitch_matrix):
+def estimate_key_with_candidates(chroma_matrix):
     """
     Using Krumhansl-Schmuckler to guess the key.
     Ignoring quiet parts and using cosine similarity.
     """
     # Getting rid of the quiet parts like fades or silence.
-    frame_energy = chroma_pitch_matrix.sum(axis=0)
+    frame_energy = chroma_matrix.sum(axis=0)
     mask = frame_energy > 0.1 * frame_energy.max()
     if np.any(mask):
-        average_chroma = np.mean(chroma_pitch_matrix[:, mask], axis=1)
+        avg_chroma = np.mean(chroma_matrix[:, mask], axis=1)
     else:
-        average_chroma = np.mean(chroma_pitch_matrix, axis=1)
+        avg_chroma = np.mean(chroma_matrix, axis=1)
 
     # Normalizing the pitch vector.
-    average_chroma = (average_chroma - np.mean(average_chroma)) / (
-        np.std(average_chroma) + 1e-8
-    )
-
-    note_names = ['C', 'C#', 'D', 'D#', 'E', 'F',
-                  'F#', 'G', 'G#', 'A', 'A#', 'B']
-
-    # Standard profiles for major and minor keys.
-    major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09,
-                              2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
-    minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53,
-                              2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+    avg_chroma = (avg_chroma - np.mean(avg_chroma)) / (np.std(avg_chroma) + 1e-8)
 
     # Normalizing the profiles.
-    major_profile = (major_profile - major_profile.mean()) / (major_profile.std() + 1e-8)
-    minor_profile = (minor_profile - minor_profile.mean()) / (minor_profile.std() + 1e-8)
+    major_norm = (MAJOR_PROFILE - MAJOR_PROFILE.mean()) / (MAJOR_PROFILE.std() + 1e-8)
+    minor_norm = (MINOR_PROFILE - MINOR_PROFILE.mean()) / (MINOR_PROFILE.std() + 1e-8)
 
     candidates = []
 
     for root_index in range(12):
-        rotated_major = np.roll(major_profile, root_index)
-        rotated_minor = np.roll(minor_profile, root_index)
+        rotated_major = np.roll(major_norm, root_index)
+        rotated_minor = np.roll(minor_norm, root_index)
 
-        maj_score = np.dot(average_chroma, rotated_major) / (
-            np.linalg.norm(average_chroma) * np.linalg.norm(rotated_major) + 1e-8
+        maj_score = np.dot(avg_chroma, rotated_major) / (
+            np.linalg.norm(avg_chroma) * np.linalg.norm(rotated_major) + 1e-8
         )
-        min_score = np.dot(average_chroma, rotated_minor) / (
-            np.linalg.norm(average_chroma) * np.linalg.norm(rotated_minor) + 1e-8
+        min_score = np.dot(avg_chroma, rotated_minor) / (
+            np.linalg.norm(avg_chroma) * np.linalg.norm(rotated_minor) + 1e-8
         )
 
         candidates.append({
-            'key': note_names[root_index] + ' major',
+            'key': NOTE_NAMES[root_index] + ' major',
             'score': maj_score
         })
         candidates.append({
-            'key': note_names[root_index] + ' minor',
+            'key': NOTE_NAMES[root_index] + ' minor',
             'score': min_score
         })
 
@@ -276,26 +272,16 @@ def estimate_key_with_candidates(chroma_pitch_matrix):
     print(f"Relative key: {relative_note} {relative_mode}")
     
     # Checking for enharmonic equivalents.
-    enharmonic_pairs = {
-        'C#': 'Db', 'Db': 'C#',
-        'D#': 'Eb', 'Eb': 'D#',
-        'F#': 'Gb', 'Gb': 'F#',
-        'G#': 'Ab', 'Ab': 'G#',
-        'A#': 'Bb', 'Bb': 'A#'
-    }
-    if best_key in enharmonic_pairs:
-        print(f"Enharmonic equivalent: {enharmonic_pairs[best_key]} {best_mode}")
+    if best_key in ENHARMONIC_PAIRS:
+        print(f"Enharmonic equivalent: {ENHARMONIC_PAIRS[best_key]} {best_mode}")
 
-    return best_key, best_mode, average_chroma
+    return best_key, best_mode, avg_chroma
 
 
 def get_diatonic_chords(key_note, key_mode):
     """Getting all the chords that fit in this key."""
-    note_names = ['C', 'C#', 'D', 'D#', 'E', 'F',
-                  'F#', 'G', 'G#', 'A', 'A#', 'B']
-
     # Finding where the root note is.
-    root_index = note_names.index(key_note)
+    root_index = NOTE_NAMES.index(key_note)
 
     if key_mode == 'major':
         # Major key chords.
@@ -307,7 +293,7 @@ def get_diatonic_chords(key_note, key_mode):
     diatonic_chords = []
     for i, chord_type in enumerate(chord_types):
         chord_root_index = (root_index + i) % 12
-        chord_root = note_names[chord_root_index]
+        chord_root = NOTE_NAMES[chord_root_index]
         diatonic_chords.append(f"{chord_root}{chord_type}")
 
     return diatonic_chords
@@ -317,9 +303,6 @@ def detect_chord(chroma_frame, diatonic_chords):
     """
     Matching the chroma to the best chord in the key using cosine similarity.
     """
-    note_names = ['C', 'C#', 'D', 'D#', 'E', 'F',
-                  'F#', 'G', 'G#', 'A', 'A#', 'B']
-
     chroma_vec = chroma_frame[:12].astype(float)
     chroma_norm = chroma_vec / (np.linalg.norm(chroma_vec) + 1e-8)
 
@@ -333,7 +316,7 @@ def detect_chord(chroma_frame, diatonic_chords):
         else:
             continue
 
-        root_index = note_names.index(root_note)
+        root_index = NOTE_NAMES.index(root_note)
 
         if quality == 'maj':
             chord_notes = [0, 4, 7]
@@ -359,40 +342,39 @@ def detect_chord(chroma_frame, diatonic_chords):
     return best_chord, best_score
 
 
-def explore_chroma(audio_time_series, sample_rate):
+def explore_chroma(audio, sample_rate):
     # First, I'm cleaning the audio to get rid of drums and rumble.
-    clean_audio = clean_audio_for_chroma(audio_time_series, sample_rate)
+    harmonic_audio = clean_audio_for_chroma(audio, sample_rate)
 
     # Getting the enhanced chroma over time.
-    chroma_pitch_matrix = compute_enhanced_chroma(clean_audio, sample_rate)
+    chroma_matrix = compute_enhanced_chroma(harmonic_audio, sample_rate)
 
-    num_pitch_classes = chroma_pitch_matrix.shape[0]
-    num_time_frames = chroma_pitch_matrix.shape[1]
+    num_frames = chroma_matrix.shape[1]
 
-    print(f"Chroma shape: {chroma_pitch_matrix.shape}")
+    print(f"Chroma shape: {chroma_matrix.shape}")
 
     # Checking the first frame.
-    first_frame_pitches = chroma_pitch_matrix[:, 0]
+    first_frame = chroma_matrix[:, 0]
     print(f"\nRaw numbers from first frame (high-pass filtered):")
-    print(first_frame_pitches)
+    print(first_frame)
 
     # Translating that to actual notes.
     print(f"\nActive notes (strength > 0.5):")
-    active_notes = identify_active_notes(first_frame_pitches, threshold=0.5)
+    active_notes = identify_active_notes(first_frame, threshold=0.5)
     for note in active_notes:
         print(f"  {note['name']}: {note['strength']:.3f}")
 
     # Checking a bit later in the song.
-    frame_to_check = min(500, num_time_frames - 1)
-    later_frame_pitches = chroma_pitch_matrix[:, frame_to_check]
+    frame_to_check = min(500, num_frames - 1)
+    later_frame = chroma_matrix[:, frame_to_check]
 
     print(f"\nActive notes at frame {frame_to_check} (a few seconds into the song):")
-    active_notes_later = identify_active_notes(later_frame_pitches, threshold=0.6)
+    active_notes_later = identify_active_notes(later_frame, threshold=0.6)
     for note in active_notes_later:
         print(f"  {note['name']}: {note['strength']:.3f}")
 
     # Figuring out the overall key.
-    key_center, key_mode, avg_chroma = estimate_key_with_candidates(chroma_pitch_matrix)
+    key_center, key_mode, avg_chroma = estimate_key_with_candidates(chroma_matrix)
 
     # Getting the chords that fit.
     diatonic_chords = get_diatonic_chords(key_center, key_mode)
@@ -402,114 +384,134 @@ def explore_chroma(audio_time_series, sample_rate):
 
     # Checking the chord progression for the first 20 frames.
     print(f"\nFirst 20 frames chord progression:")
-    for frame in range(min(20, chroma_pitch_matrix.shape[1])):
-        chord, score = detect_chord(chroma_pitch_matrix[:, frame], diatonic_chords)
+    for frame in range(min(20, chroma_matrix.shape[1])):
+        chord, score = detect_chord(chroma_matrix[:, frame], diatonic_chords)
         print(f"  Frame {frame:2d}: {chord} (conf: {score:.3f})")
 
     return key_center, key_mode, avg_chroma, diatonic_chords
 
 
-def analyze_and_store(track_name, file_path, results_list):
-    """Extracting data for the CSV file."""
-    try:
-        audio_time_series, sample_rate = load_audio(file_path)
-        tempo_bpm, beat_frame_indices, onset_env = extract_tempo(audio_time_series, sample_rate)
-        time_signature = estimate_time_signature(audio_time_series, sample_rate, beat_frame_indices, onset_env)
-        
-        # Doing the chroma processing.
-        clean_audio = clean_audio_for_chroma(audio_time_series, sample_rate)
-        chroma_pitch_matrix = compute_enhanced_chroma(clean_audio, sample_rate)
-        
-        # Running the key detection logic.
-        frame_energy = chroma_pitch_matrix.sum(axis=0)
-        mask = frame_energy > 0.1 * frame_energy.max()
-        average_chroma = np.mean(chroma_pitch_matrix[:, mask], axis=1) if np.any(mask) else np.mean(chroma_pitch_matrix, axis=1)
-        average_chroma = (average_chroma - np.mean(average_chroma)) / (np.std(average_chroma) + 1e-8)
+def detect_key_for_export(chroma_matrix):
+    """
+    Key detection helper for CSV export.
+    Returns key info and top 3 candidates.
+    """
+    frame_energy = chroma_matrix.sum(axis=0)
+    mask = frame_energy > 0.1 * frame_energy.max()
+    avg_chroma = np.mean(chroma_matrix[:, mask], axis=1) if np.any(mask) else np.mean(chroma_matrix, axis=1)
+    avg_chroma = (avg_chroma - np.mean(avg_chroma)) / (np.std(avg_chroma) + 1e-8)
 
-        note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-        major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
-        minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
-        major_profile = (major_profile - major_profile.mean()) / (major_profile.std() + 1e-8)
-        minor_profile = (minor_profile - minor_profile.mean()) / (minor_profile.std() + 1e-8)
+    major_norm = (MAJOR_PROFILE - MAJOR_PROFILE.mean()) / (MAJOR_PROFILE.std() + 1e-8)
+    minor_norm = (MINOR_PROFILE - MINOR_PROFILE.mean()) / (MINOR_PROFILE.std() + 1e-8)
 
-        key_candidates = []
-        for root_index in range(12):
-            rotated_major = np.roll(major_profile, root_index)
-            rotated_minor = np.roll(minor_profile, root_index)
-            maj_score = np.dot(average_chroma, rotated_major) / (np.linalg.norm(average_chroma) * np.linalg.norm(rotated_major) + 1e-8)
-            min_score = np.dot(average_chroma, rotated_minor) / (np.linalg.norm(average_chroma) * np.linalg.norm(rotated_minor) + 1e-8)
-            key_candidates.append((note_names[root_index] + ' major', maj_score))
-            key_candidates.append((note_names[root_index] + ' minor', min_score))
-        
-        key_candidates.sort(key=lambda x: x[1], reverse=True)
-        best_key_full, best_score = key_candidates[0]
-        best_key, best_mode = best_key_full.split()
-        relative_note, relative_mode = get_relative_key(best_key, best_mode)
-        
-        enharmonic_pairs = {'C#': 'Db', 'Db': 'C#', 'D#': 'Eb', 'Eb': 'D#', 
-                           'F#': 'Gb', 'Gb': 'F#', 'G#': 'Ab', 'Ab': 'G#', 
-                           'A#': 'Bb', 'Bb': 'A#'}
-        enharmonic_equiv = enharmonic_pairs.get(best_key, None)
+    candidates = []
+    for root_index in range(12):
+        rotated_major = np.roll(major_norm, root_index)
+        rotated_minor = np.roll(minor_norm, root_index)
+        maj_score = np.dot(avg_chroma, rotated_major) / (np.linalg.norm(avg_chroma) * np.linalg.norm(rotated_major) + 1e-8)
+        min_score = np.dot(avg_chroma, rotated_minor) / (np.linalg.norm(avg_chroma) * np.linalg.norm(rotated_minor) + 1e-8)
+        candidates.append((NOTE_NAMES[root_index] + ' major', maj_score))
+        candidates.append((NOTE_NAMES[root_index] + ' minor', min_score))
 
-        # Saving the data in a format that works for CSV.
-        results_list.append({
-            'Track': track_name.replace('_', ' ').title(),
-            'Tempo_BPM': round(tempo_bpm, 2),
-            'Time_Signature': f'{time_signature}/4',
-            'Detected_Key': f'{best_key} {best_mode}',
-            'Key_Score': round(best_score, 3),
-            'Relative_Key': f'{relative_note} {relative_mode}',
-            'Enharmonic': f'{enharmonic_equiv} {best_mode}' if enharmonic_equiv else '',
-            'Top1_Key': f"{key_candidates[0][0]} ({key_candidates[0][1]:.3f})",
-            'Top2_Key': f"{key_candidates[1][0]} ({key_candidates[1][1]:.3f})", 
-            'Top3_Key': f"{key_candidates[2][0]} ({key_candidates[2][1]:.3f})",
-            'Chroma_Frames': chroma_pitch_matrix.shape[1]
-        })
-        
-    except Exception as e:
-        print(f"Export error for {track_name}: {e}")
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    best_key_full, best_score = candidates[0]
+    best_key, best_mode = best_key_full.split()
+    relative_note, relative_mode = get_relative_key(best_key, best_mode)
+    enharmonic = ENHARMONIC_PAIRS.get(best_key, None)
 
-def analyze_track():
-    print("Analyzing track...")
-    
-    tracks = {
-        'all_falls_down': os.path.join('..', '..', 'data', 'audio', 'All Falls Down.mp3'),
-        'follow_god': os.path.join('..', '..', 'data', 'audio', 'Follow God.mp3'),
-        'gold_digger': os.path.join('..', '..', 'data', 'audio', 'Gold Digger.mp3'),
-        'heartless': os.path.join('..', '..', 'data', 'audio', 'Heartless.mp3'),
-        'love_lockdown': os.path.join('..', '..', 'data', 'audio', 'Love Lockdown.mp3'),
-        'stronger': os.path.join('..', '..', 'data', 'audio', 'Stronger.mp3')
+    return {
+        'key': best_key,
+        'mode': best_mode,
+        'score': best_score,
+        'relative_note': relative_note,
+        'relative_mode': relative_mode,
+        'enharmonic': enharmonic,
+        'candidates': candidates[:3]
     }
 
+
+def analyze_single_track(track_name, file_path, results_list):
+    """Analyze one track and append results to list."""
+    try:
+        audio, sample_rate = load_audio(file_path)
+        tempo, beat_frames, onset_env = extract_tempo(audio, sample_rate)
+        time_sig = estimate_time_signature(audio, sample_rate, beat_frames, onset_env)
+
+        harmonic = clean_audio_for_chroma(audio, sample_rate)
+        chroma_matrix = compute_enhanced_chroma(harmonic, sample_rate)
+
+        key_info = detect_key_for_export(chroma_matrix)
+
+        results_list.append({
+            'Track': track_name.replace('_', ' ').title(),
+            'Tempo_BPM': round(tempo, 2),
+            'Time_Signature': f'{time_sig}/4',
+            'Detected_Key': f"{key_info['key']} {key_info['mode']}",
+            'Key_Score': round(key_info['score'], 3),
+            'Relative_Key': f"{key_info['relative_note']} {key_info['relative_mode']}",
+            'Enharmonic': f"{key_info['enharmonic']} {key_info['mode']}" if key_info['enharmonic'] else '',
+            'Top1_Key': f"{key_info['candidates'][0][0]} ({key_info['candidates'][0][1]:.3f})",
+            'Top2_Key': f"{key_info['candidates'][1][0]} ({key_info['candidates'][1][1]:.3f})",
+            'Top3_Key': f"{key_info['candidates'][2][0]} ({key_info['candidates'][2][1]:.3f})",
+            'Chroma_Frames': chroma_matrix.shape[1]
+        })
+
+    except Exception as e:
+        print(f"Error analyzing {track_name}: {e}")
+
+
+def analyze_audio_tracks(audio_dir, output_path):
+    """
+    Main entry point for audio analysis.
+    Analyzes all mp3 files in audio_dir and saves results to output_path.
+    """
+    print("Starting audio analysis...")
+
+    # Find all mp3 files in the audio directory
+    mp3_files = [f for f in os.listdir(audio_dir) if f.endswith('.mp3')]
+
+    if not mp3_files:
+        print(f"No mp3 files found in {audio_dir}")
+        return
+
     results = []
-    
-    for track_name, file_path in tracks.items():
-        print(f"\n{'=' * 60}")
-        print(f"Processing {track_name}...")
-        print(f"{'=' * 60}")
+
+    for filename in mp3_files:
+        file_path = os.path.join(audio_dir, filename)
+        track_name = os.path.splitext(filename)[0].lower().replace(' ', '_')
+
+        print(f"\n{'-' * 70}")
+        print(f"Processing {filename}:")
+        print(f"{'-' * 70}")
 
         try:
-            audio_time_series, sample_rate = load_audio(file_path)
-        except FileNotFoundError:
-            print(f"File not found: {file_path}")
+            audio, sample_rate = load_audio(file_path)
+        except Exception as e:
+            print(f"Could not load {filename}: {e}")
             continue
 
-        # Running the analysis and printing the results.
-        tempo_bpm, beat_frame_indices, onset_env = extract_tempo(audio_time_series, sample_rate)
-        print(f"Estimated tempo: {tempo_bpm:.2f} BPM")
-        time_signature = estimate_time_signature(audio_time_series, sample_rate, beat_frame_indices, onset_env)
-        print(f"Estimated time signature: {time_signature}/4")
-        explore_chroma(audio_time_series, sample_rate)
-        
-        # Exporting to CSV silently.
-        analyze_and_store(track_name, file_path, results)
+        # Print detailed analysis
+        tempo, beat_frames, onset_env = extract_tempo(audio, sample_rate)
+        print(f"Estimated tempo: {tempo:.2f} BPM")
+        time_sig = estimate_time_signature(audio, sample_rate, beat_frames, onset_env)
+        print(f"Estimated time signature: {time_sig}/4")
+        explore_chroma(audio, sample_rate)
 
-    # Saving the CSV file.
+        # Store for CSV
+        analyze_single_track(track_name, file_path, results)
+
+    # Save results
     if results:
         df = pd.DataFrame(results)
-        csv_path = os.path.join(OUTPUT_DIR, 'kanye_track_analysis.csv')
-        df.to_csv(csv_path, index=False)
-        print(f"\nResults exported to: {csv_path}")
+        df.to_csv(output_path, index=False)
+        print(f"\nResults exported to: {output_path}")
+
 
 if __name__ == "__main__":
-    analyze_track()
+    # Standalone mode - use paths relative to this file's location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(os.path.dirname(script_dir))
+    audio_dir = os.path.join(base_dir, 'data', 'audio')
+    output_path = os.path.join(base_dir, 'outputs', 'track_analysis.csv')
+
+    analyze_audio_tracks(audio_dir, output_path)

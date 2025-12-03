@@ -13,11 +13,14 @@ from data_collection.merge_clean import clean_and_merge
 from data_collection.top_songs import get_top_songs
 from data_collection.charts import add_chart_positions
 from data_collection.charted_only import filter_charted_songs
+from audio.audio_analysis import analyze_audio_tracks
 
 # Data paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
 PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
+AUDIO_DIR = os.path.join(BASE_DIR, "data", "audio")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 
 ALBUM_PATH = os.path.join(RAW_DIR, "kanye_album_tracklist.csv")
 LYRICS_PATH = os.path.join(RAW_DIR, "kanye_lyrics.csv")
@@ -27,6 +30,7 @@ TOP_FIVE_PATH = os.path.join(PROCESSED_DIR, "top5_album.csv")
 TOP_FIFTY_PATH = os.path.join(PROCESSED_DIR, "top50.csv")
 BILLBOARD_POSITIONS_PATH = os.path.join(PROCESSED_DIR, "charts.csv")
 CHARTED_ONLY_PATH = os.path.join(PROCESSED_DIR, "charted.csv")
+AUDIO_ANALYSIS_PATH = os.path.join(OUTPUT_DIR, "kanye_track_analysis.csv")
 
 
 def main():
@@ -71,6 +75,13 @@ def main():
     else:
         print("Filtering charted songs...")
         filter_charted_songs(BILLBOARD_POSITIONS_PATH, CHARTED_ONLY_PATH)
+
+    # Step 7: Analyze audio tracks
+    if os.path.exists(AUDIO_ANALYSIS_PATH):
+        print("Audio analysis already exists")
+    else:
+        print("Analyzing audio tracks...")
+        analyze_audio_tracks(AUDIO_DIR, AUDIO_ANALYSIS_PATH)
 
     print("Pipeline complete")
 
