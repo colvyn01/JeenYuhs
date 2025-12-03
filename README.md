@@ -13,3 +13,4 @@ python src/main.py
 | Command | Description |
 |---------|-------------|
 | `python src/main.py` | Runs the complete data collection pipeline (album info, lyrics, charts, audio analysis) |
+| 'python src/audio/audio_analysis.py'
