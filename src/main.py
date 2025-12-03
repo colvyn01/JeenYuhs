@@ -30,7 +30,7 @@ TOP_FIVE_PATH = os.path.join(PROCESSED_DIR, "top5_album.csv")
 TOP_FIFTY_PATH = os.path.join(PROCESSED_DIR, "top50.csv")
 BILLBOARD_POSITIONS_PATH = os.path.join(PROCESSED_DIR, "charts.csv")
 CHARTED_ONLY_PATH = os.path.join(PROCESSED_DIR, "charted.csv")
-AUDIO_ANALYSIS_PATH = os.path.join(OUTPUT_DIR, "kanye_track_analysis.csv")
+AUDIO_ANALYSIS_PATH = os.path.join(OUTPUT_DIR, "track_analysis.csv")
 
 
 def main():
