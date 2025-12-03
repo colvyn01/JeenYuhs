@@ -1,7 +1,9 @@
 import os
 import librosa
+import librosa.display
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 dir = os.path.dirname(__file__)
 
@@ -32,11 +34,20 @@ TRACK_DETAILS = {
 }
 
 # Librosa resamples everything to 22050 Hz and also sets the audio as mono unless you tell it not to
-samples, sample_rate = librosa.load(LOAD_TRACK['Stronger'], sr=None, mono=False) 
+samples, sample_rate = librosa.load(LOAD_TRACK['Stronger'], sr=None, mono=False)
 
-print(samples.shape, sample_rate)
+# only trims the audio doesn't change sample rate or mono/stereo
+samples_trimmed, trimmed_range = librosa.effects.trim(samples)
 
-def DETECT_KEY(samples, sample_rate):
+plt.figure(figsize=(14, 5))
+librosa.display.waveshow(samples_trimmed, sr=sample_rate)
+plt.title("Stronger by Kanye West")
+plt.xlabel("Time (s)")
+plt.ylabel("Amplitude")
+
+plt.show()
+
+def DETECT_KEY(samples_trimmed, sample_rate):
     return 1
 
 if __name__ == "__main__":
