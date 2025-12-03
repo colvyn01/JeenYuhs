@@ -1,14 +1,14 @@
 """
-(jeen-yuhs/src/album_collector.py)
-@author Colvyn Harris Mathan Mohan
-@version 11/20/2025
-
-Collects tracklist data from Spotify's API and saves it to CSV.
+Collects tracklist data from Spotify API and saves to CSV.
 """
 
 import os
+import sys
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
@@ -33,20 +33,17 @@ KANYE_ALBUMS = {
     "Donda": "5CnpZV3q5BcESefcB3WJmz",
 }
 
-album_tracklist = []
 
-
-def collect_album_tracklist():
+def collect_album_tracklist(output_path):
+    album_tracklist = []
+    
     for album_name, album_id in KANYE_ALBUMS.items():
         album_info = sp.album(album_id)
         release_date = album_info["release_date"]
-
         album_tracks = sp.album_tracks(album_id)["items"]
 
         for track in album_tracks:
             full_track_details = sp.track(track["id"])
-
-            # Extract all artist names
             all_artists = [artist["name"] for artist in track["artists"]]
             primary_artist = all_artists[0] if all_artists else None
             featured_artists = all_artists[1:] if len(all_artists) > 1 else []
@@ -62,17 +59,12 @@ def collect_album_tracklist():
                 "Explicit": track["explicit"],
                 "Duration": track["duration_ms"],
                 "Primary Artist": primary_artist,
-                "Featured Artists": ", ".join(
-                    featured_artists
-                ),  # Join as comma-separated string
+                "Featured Artists": ", ".join(featured_artists),
                 "Total Artists": len(all_artists),
                 "Popularity": full_track_details["popularity"],
             }
-
             album_tracklist.append(track_data)
 
     df = pd.DataFrame(album_tracklist)
-    df.to_csv(
-        os.path.join("..", "data", "raw", "kanye_album_tracklist.csv"), index=False
-    )
-    print("Saved kanye_album_tracklist.csv")
+    df.to_csv(output_path, index=False)
+    print("Saved album tracklist")

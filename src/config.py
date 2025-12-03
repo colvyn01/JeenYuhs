@@ -1,4 +1,5 @@
-# Jeen-Yuhs/src/config.py
+# API Credentials
+
 SPOTIFY_CLIENT_ID = "ffad3d1d90994fe68844a38f013c11ff"
 SPOTIFY_CLIENT_SECRET = "4309d6dcffff47eb881399f6ee09d380"
 
