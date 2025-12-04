@@ -13,7 +13,7 @@ from data_collection.merge_clean import clean_and_merge
 from data_collection.top_songs import get_top_songs
 from data_collection.charts import add_chart_positions
 from data_collection.charted_only import filter_charted_songs
-from audio.audio_analysis import analyze_audio_tracks
+#from audio.audio_analysis import analyze_audio_tracks
 
 # Data paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -81,7 +81,7 @@ def main():
         print("Audio analysis already exists")
     else:
         print("Analyzing audio tracks...")
-        analyze_audio_tracks(AUDIO_DIR, AUDIO_ANALYSIS_PATH)
+        #analyze_audio_tracks(AUDIO_DIR, AUDIO_ANALYSIS_PATH)
 
     print("Pipeline complete")
 

@@ -18,3 +18,4 @@ Thumbs.db
 data/processed/
 data/raw/hot-100-current.csv
 outputs/
+sound_synthesis.py
